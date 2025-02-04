@@ -1,0 +1,299 @@
+---
+title: "PROJECT 6 STAT 5474"
+author: "Prince Appiah"
+date: "11/18/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+\section{Read in data}
+
+```{r}
+ILPD <- read.csv(file = "Indian Liver Patient Dataset (ILPD).csv",
+       header=FALSE, col.names=c("age", "gender", "TB", "DB", "alkphos",
+       "sgpt", "sgot", "TP", "alb", "AGratio", "liver"))
+    dim(ILPD); head(ILPD)
+```
+
+\section{Data Cleaning}
+
+(a) What is the proportion of subjects who were diagnosed with liver diseases? Do you think this is ever close to the real prevalence rate of liver diseases in the general population?
+
+```{r}
+prop <- data.frame(table(ILPD$liver))
+prop$Proportion <- (prop$Freq/sum(prop$Freq))*100
+names(prop) <- c("liver","Frequency","Proportion")
+prop
+```
+
+**Comment**
+We see from the table that a higher percentage(71.36%) of the subjects have liver disease. This rate may be too far from the real prevalence rate of the liver diseases in the general population.
+
+
+(b) Are there any missing data? If so, handle them in an appropriate way (via, e.g., listwise deletion, imputation)
+
+```{r}
+# Checking for missing data
+library(questionr)
+freq.na(ILPD)
+```
+
+**Comment**
+We see from the output that the variable has 4 missing values with approximately 1% of the data.
+
+```{r}
+# Imputation by Mice
+set.seed(123)
+suppressPackageStartupMessages(library(mice))
+data.imputed <- mice(ILPD, printFlag = F)
+dat <- complete(data.imputed, 1)
+dat <- as.data.frame(dat)
+
+# change the value 2 of liver to 0
+cond <- dat$liver == 1
+dat$liver[!cond] <- 0
+
+# Verifying that there are no missing values after the imputation
+freq.na(dat)
+```
+
+**Comment**
+we see that after the imputation by mice there are no missing values in the data.
+
+
+\section{EDA and Variable Screening}
+
+(a) Among all the predictors, how many of are continuous, integer counts and categorical?
+```{r}
+str(dat)
+```
+
+**Comment**
+From the output we have 5 continuous counts, 4 integer counts and 2 categorical counts.
+
+
+(b) For each categorical predictor, use X2 -test of independence to assess its association with
+the binary response liver. For other types of predictors, use either two-sample t test (or its nonparametric alternative – Wilcoxon rank-sum test). Output the p-value for each variable. Some sample R code for this part is given below. Alternatively, you may use simple logistic regression for this purpose.
+
+\ subsection{Test of Independent and Two Sample t-test}    
+```{r}
+# Two sample t-test
+cond.1 <- dat$liver == 1
+cond.2 <- as.vector(which(sapply(dat[,-c(11)], is.numeric), arr.ind = T))
+print("Test of Normality of the Numerical Variables for Subjects Diagnosed as Liver Disease")
+sapply(dat[cond.1, cond.2], shapiro.test)[-c(3,4),]
+```
+
+```{r}
+print("Test of Normality of the Numerical Variables for Subjects without Liver Disease")
+sapply(dat[!cond.1, cond.2], shapiro.test)[-c(3,4),]
+```
+
+**Comment**
+For the numerical variables, we first use Shapiro-Wilk test to check the assumption of normality so as to know whether to use parametric or nonparametric approach for the two sample t-test.
+We see from the output of the Shapiro-Wilk normality test above that the assumption of normality is violated since the p-values are less than 0.05 in each group with the exception of the variable 'TP' for subjects without liver disease. Thus, we use the Wilcoxon rank-sum test.
+
+
+```{r}
+set.seed(123)
+suppressPackageStartupMessages(library(car)) 
+vars.nominal <- c("gender")
+cols.x <- 1:(NCOL(dat)-1)
+xnames <- names(dat)[cols.x]
+y <- dat$liver
+OUT <- NULL
+for (j in 1:length(cols.x)){
+  x <- dat[, cols.x[j]]
+  xname <- xnames[j]
+  if (is.element(xname, vars.nominal)){
+    tbl <- table(x, y)
+    pvalue <- chisq.test(tbl)$p.value
+  } else {
+    # WILCOXON TEST
+    pvalue <- wilcox.test(x~y, alternative="two.sided")$p.value
+  }
+  OUT <- rbind(OUT, cbind(xname=xname, pvalue=pvalue))
+}
+OUT <- as.data.frame(OUT, stringsAsFactors =F)
+colnames(OUT) <- c("name", "pvalue")
+OUT
+```
+
+
+(c) Applying a liberal threshold significance level a = 0.20, exclude predictors that are associated with a p-value larger than that from the subsequent logistic model fitting.
+
+```{r}
+#Variable screening
+cond.3 <- OUT$pvalue > 0.20
+OUT[cond.3, ]
+```
+
+**Comment**
+From the output,the predictor TP has a p-value greater than 0.20. Therefore, we exclude TP from the subsequent analysis.
+
+\section{Variable  Selection}
+
+(a) First fit the full model with all predictors that have passed the screening in Part 2c. Call it fit.full.
+```{r}
+#Full model.
+set.seed(123)
+formula0 <- liver ~ age + factor(gender) + TB + DB + alkphos + sgpt + 
+          sgot + alb  + AGratio
+fit.full <- glm(formula0, family=binomial, data=dat)
+summary(fit.full)
+names(summary(fit.full))
+print("BIC")
+BIC(fit.full)
+```
+
+**Comment**
+We see from the output that the variables age, DB and sgpt are statistically significant since their p-values are less than 0.05. Also, the BIC is 643.3317.
+
+(b) Then select your ‘best’ model stepwise selection at the aid of BIC. This can be done by choosing direction="both" and k=log(n) in the step() function. Call the resultant model as fit.step.
+
+```{r}
+#Stepwise Variable Selection (SVS)
+set.seed(123)
+fit.step <- suppressWarnings(step(fit.full, direction = c("both"), 
+                                  k = log(NROW(dat)), trace = F))
+summary(fit.step)
+print("BIC")
+BIC(fit.step)
+```
+
+**Comment**
+From the output, its clearly that the variables age,DB and sgpt are statistically significant. Also, we observe that the BIC is 612.4361 is less than the previous BIC=643.3317.
+
+
+(c) Next select your ‘best’ model with one of the regularization methods with different types of penalties, i.e., LASSO, SCAD, or MCP. Call the resultant model as fit.pen
+
+```{r}
+#SCAD
+set.seed(123)
+library(ncvreg)
+y <- dat$liver
+X <- model.matrix(object=~ age + factor(gender) + TB + DB + alkphos + sgpt + sgot 
+                  + alb + AGratio, data=dat)
+cvfit.SCAD <- cv.ncvreg(X=X,y=y, nfolds=5, family="binomial", penalty="SCAD", 
+                        lambda.min=.001, nlambda=400, eps=.01, max.iter=3000) 
+plot(cvfit.SCAD)
+```
+
+**Comment**
+We see from the plot that six variables are selected as important/relevant.
+
+```{r}
+result.SCAD <- cvfit.SCAD$fit
+beta.hat <- as.vector(result.SCAD$beta[-1, cvfit.SCAD$min])
+cutoff <- 0
+terms <- colnames(X)[abs(beta.hat) > cutoff]
+print("Important Variables")
+terms
+
+```
+
+```{r}
+terms[2] <- c("factor(gender)")
+formula.SCAD <- as.formula(paste(c("liver ~ 1", terms), collapse = " + "))
+fit.pen <- glm(formula.SCAD, data = dat, family="binomial")
+summary(fit.pen)
+print("BIC")
+BIC(fit.pen)
+```
+**Comment**
+From the output, we see that only the variables age, DB and sgpt were found to be statistically significant. However, SCAD approach found the variables gender, alkphos, and AGratio to be important variables even though they are not statistically significant in the model. Also, the BIC is 625.4182.
+
+
+\section{Model Comparison}
+In order to make a resolution on the final model, let us compare the three models in terms of the area under the ROC curve (AUC) or the C-statistics. In order to have a more ‘honest’ comparison, we will compare them on the basis of their predicted probabilities after cross- validation.
+a) Compute the jackknife predicted probabilities from every model.
+```{r}
+set.seed(123)
+n <- NROW(dat)
+pop.jk <- matrix(rep(0, 3*n), ncol = 3)
+model.names <- c("fit.full", "fit.step", "fit.pen")
+for (i in 1:n){
+  fit1.i <- suppressWarnings(glm(formula(fit.full), data=dat[-i,], 
+	                              family = "binomial"))
+  fit2.i <- suppressWarnings(glm(formula(fit.step), data=dat[-i,], 
+	                              family = "binomial"))
+  fit3.i <- suppressWarnings(glm(formula(fit.pen), data=dat[-i,], 
+	                              family = "binomial"))
+	pop.jk[i,1] <- predict(fit1.i, newdata=dat[i,], type="response")
+	pop.jk[i,2] <- predict(fit2.i, newdata=dat[i,], type="response")
+	pop.jk[i,3] <- predict(fit3.i, newdata=dat[i,], type="response")
+  }
+
+p.jk.fit.full <- as.vector(pop.jk[,1])
+p.jk.fit.step <- as.vector(pop.jk[,2])
+p.jk.fit.pen <- as.vector(pop.jk[,3])
+```
+
+(b) Plot their ROC curves and find their AUC values. Which model provides the largest AUC?
+
+```{r}
+set.seed(123)
+suppressPackageStartupMessages(library(pROC)) 
+y <- dat$liver
+roc.full <- plot.roc(y, p.jk.fit.full,  ylim=c(0, 100),
+	main="(a) ROC for Model via Full Model", percent=TRUE, 
+	print.auc=TRUE, print.auc.cex=1.5, col="red")
+```
+**Comment**
+The area under the ROC is AUC=73.7%
+
+```{r}
+roc.step <- plot.roc(y, p.jk.fit.step, ylim=c(0, 100),
+ 	main="(b) ROC for Model via SVS", percent=TRUE, 
+	print.auc=TRUE, print.auc.cex=1.5, col="green")
+```
+
+**Comment**
+The area under the ROC is AUC=74.4%
+
+```{r}
+roc.SCAD <- plot.roc(y, p.jk.fit.pen, ylim=c(0, 100),
+ 	main="(c) ROC for Model via SCAD", percent=TRUE, 
+	print.auc=TRUE, print.auc.cex=1.5, col="orange")
+```
+
+**Comment**
+The area under the ROC is AUC=74.5%
+
+**Conclusion**
+We see from the above three curves that the model via SCAD has the largest AUC of 74.5%. Hence, we select this as our final model.
+
+
+\section{Final Best Logistic Model/Confidence intervals/Odd ratios}
+
+Finally, present your final best logistic model and output the 95% confidence intervals for coefficients Bj ’s as well as their associated odds ratio (i.e., exp(Bj )). Interpret the results within the liver disease diagnostic context.
+
+```{r}
+set.seed(123)
+summary(fit.pen) # summary of the final best logistic model 
+```
+
+```{r}
+# CONFIDENCE INTERVAL FOR BETA'S
+library(MASS)
+ci <- suppressWarnings(confint(fit.pen, level = 0.95))
+print("Confidence Interval for Beta's")
+ci
+```
+```{r}
+print("Odds Ratio")
+exp(fit.pen$coefficients)
+
+print("95% CI of Odds Ratio")
+exp(ci)
+```
+
+**Comment**
+First, we see that all the values of odds Ratio for the variables lie within the 95% confidence interval of odds ratios which means that the variables age, gender(Male), DB, alkphos,sgpt and AGratio are factors for liver disease.So, the liver disease is likely to occur.
+Also, we see that the confidence intervals for Betas with respect to the variables age, DB and sgpt are positive which implies positive relationship. 

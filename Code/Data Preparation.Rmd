@@ -1,0 +1,199 @@
+---
+title: "STAT 5474 Project I"
+author: "Prince Appiah"
+date: "9/7/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# READ DAILY WEATHER DATA IN 2021
+```{r}
+dat <- NULL
+current.month <- 9
+for (i in 1:(current.month - 1)){
+    i0 <- ifelse(i<10, paste("0", i, sep=""), i)
+    mth <- paste("2021", i0, sep="")
+    bom <- paste("IDCJDW2801.", mth, ".csv",sep="")
+    
+    dat.i <- read.csv(bom, skip=6, check.names=FALSE,
+        na.strings = c("NA", "", " "),stringsAsFactors=FALSE)
+        dat.i[, 1] <- toupper(month.abb[i])
+    # USE month.name() TO GET FULL MONTH NAMES 
+    dat <- rbind(dat, dat.i)
+}
+month.names <- month.name[1:8]
+## [1] "January"  "February" "March"    "April"    "May"      "June"     "July"     "August"
+dim(dat)
+## The dimension of the data is 243 rows and 22 columns.
+head(dat)
+## The output displays the first 6 rows of the data.
+```
+
+# 2(a)
+
+```{r}
+apply(dat, MARGIN = 2, FUN = function(x){table(x, useNA = "ifany")})
+## The variable "9am wind speed (km/h)" has Calm as a value and Calm has a frequency of 36.
+## The variable "3pm wind speed (km/h)" has Calm as a value and Calm has a frequency of 3.
+```
+
+# 2(b)
+```{r}
+dat <- dat[, -c(10)]
+dim(dat)
+## The dimension is now is 243 rows and 21 columns
+colnames(dat)
+## The output excludes the variable "Time of maximum wind gust"
+```
+ 
+#2(c)
+```{r}
+names(dat) <- c("Month", "Date", "MinTemp", "MaxTemp", "Rainfall",
+           "Evaporation", "Sunshine", "WindGustDir", "WindGustSpeed",
+           "Temp9am", "Humidity9am", "Cloud9am", "WindDir9am",
+           "WindSpeed9am", "Pressure9am", "Temp3pm", "Humidity3pm",
+           "Cloud3pm", "WindDir3pm", "WindSpeed3pm", "Pressure3pm")
+       dim(dat)
+       names(dat)
+       ## The output gives the new names 
+```
+
+```{r}
+# Notice that the variables Evaporation and Sunshine have all values recorded as NA and 
+# may not be useful for weather forecast purpose and so let's remove from the data set
+```
+
+```{r}
+dat <- dat[,-c(6:7)]
+colnames(dat)
+```
+
+# 2(d)
+```{r}
+WindSpeed9am<-as.vector(dat$"WindSpeed9am")
+WindSpeed9am[WindSpeed9am=="Calm"] <-0
+dat$"WindSpeed9am"<-WindSpeed9am
+dat$"WindSpeed9am"<- as.numeric(dat$"WindSpeed9am")
+mode(dat$"WindSpeed9am")
+table(dat$"WindSpeed9am")
+
+
+WindSpeed3pm<-as.vector(dat$"WindSpeed3pm")
+WindSpeed3pm[WindSpeed3pm=="Calm"] <-0
+dat$"WindSpeed3pm"<-WindSpeed3pm
+dat$"WindSpeed3pm"<- as.numeric(dat$"WindSpeed3pm")
+mode(dat$"WindSpeed3pm")
+table(dat$"WindSpeed3pm")
+
+## The output shows that the value Calm in the variable "WindSpeed9am" has been changed
+## to 0 and the variable has also been changed to numeric.
+
+## The output shows that the value Calm in the variable "WindSpeed3pm" has been changed
+## to 0 and the variable has also been changed to numeric.
+```
+
+
+
+
+# 2(e)
+
+```{r}
+dat$RainToday <- ifelse(dat$Rainfall >1, 1, 0)
+head(dat$RainToday)
+
+dat$RainTomorrow <- c(dat$RainToday[2:nrow(dat)], NA)
+head(dat$RainTomorrow)
+
+```
+
+
+# 2(f)
+
+```{r}
+save(dat, file = "Rdata")
+```
+
+
+# (3)
+
+# Missing Values
+
+```{r}
+miss.info <- function(dat, filename=NULL){
+    vnames <- colnames(dat); vnames
+    n <- nrow(dat)
+    out <- NULL
+    for (j in 1: ncol(dat)){
+        vname <- colnames(dat)[j]
+        x <- as.vector(dat[,j])
+        n1 <- sum(is.na(x), na.rm=T)
+        n2 <- sum(x=="NA", na.rm=T)
+        n3 <- sum(x=="", na.rm=T)
+        nmiss <- n1 + n2 + n3
+        ncomplete <- n-nmiss
+        out <- rbind(out, c(col.number=j, vname=vname, 
+          mode=mode(x), n.levels=length(unique(x)), 
+          ncomplete=ncomplete, miss.perc=nmiss/n))
+    }
+    out <- as.data.frame(out)
+    row.names(out) <- NULL 
+    if (!is.null(filename)) write.csv(out, file = filename, row.names=F)
+    return(out)
+}
+miss.info(dat)
+## From the output the following are the variables with missing values and their 
+## corresponding missing percentage:
+## Cloud9am 41.564%
+## WindDir9am 14.815%
+## Cloud3pm 38.272%
+## WindDir3pm 1.235%
+## RainTomorrow 0.412%
+
+```
+
+
+
+# Association between categorical variable with the binary outcome
+```{r}
+tab <- table(dat$Month, dat$RainTomorrow, useNA="no"); tab
+chisq.test(tab)
+fisher.test(tab, simulate.p.value =TRUE)
+
+## The p-value for Chi-Square test is 0.1046 > 0.05=significance level.
+## Thus, we conclude that at 5% significant level, there is an association between 
+## RainTomorrow and WindGustDir.
+
+## Also,the p-value for  Fisher exact test is 0.05947 > 0.05=significance level. 
+## Thus, we  conclude that at 5% significant level, there is an association between 
+## RainTomorrow and WindGustDir.
+```
+
+
+# Nonparameetric test-Wilcoxon rank sum test
+```{r}
+wilcox <- wilcox.test(Temp9am ~ RainTomorrow, data=dat)
+wilcox
+
+## Since the p-value = 0.1831 > 0.05, we conclude that at 5% significance level,
+## there is no enough evidence to say that the true location shift in not equal to 0.
+```
+
+
+# barplot for categorical variable(possibly grouped by the binary outcome)
+```{r}
+counts <- table(dat$WindGustDir)
+barplot(counts, main="WindGustDirection",
+  names.arg=c( "E"," ENE"," ESE","N", "NE","NNE","NNW","NW","S","SE"," SSE","SSW","SW","W","WNW","WSW"))
+
+## From the graph, we see that the maximum direction of the wind occurred at NW 
+## and the minimum occurred at SW and WSW. Thus, we see that the direction of 
+## the wind tells us when there was rain and no rain.
+```
+
+
+
+

@@ -1,0 +1,156 @@
+---
+title: "STAT 5474 HW 7"
+author: "Prince Appiah"
+date: "11/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\section{Data Preparation}
+\subsection{Read in the Data}
+```{r}
+# install.packages("kernlab")
+library(kernlab)
+data(spam)
+dim(spam) 
+```
+
+(a) Take a look at the data. Inspect if there are missing values and, if so, impute them.
+
+```{r}
+sum(is.na(spam))
+```
+
+**Comment**
+There are no missing values in the data.
+
+\subsection{EDA}
+(b) Explore data using numerical and graphical EDA techniques. For example, what is the percentage of spam emails? What are the types (categorical or continuous) of the inputs? Are there any peculiar features for any variable(s) that we should pay attention to? Do not present any R output for this part unless really necessary. Instead, summarize your findings in concise language.
+
+Percentage of spam emails
+```{r}
+table(spam$type)/4601*100
+suppressPackageStartupMessages(library(ggplot2))
+ggplot(data = spam) + 
+  geom_bar(mapping = aes(x = type, y = ..prop.., group = 1), stat = "count") + 
+  scale_y_continuous(labels = scales::percent_format())
+```
+
+
+What are the types (categorical or continuous) of the inputs?
+```{r}
+#str(spam)
+```
+
+Are there any peculiar features for any variable(s) that we should pay attention to?
+```{r}
+# code type as 0 and 1
+#table(spam$type)
+#spam$type <- ifelse(spam$type == "spam", 1, 0)
+#print("Frequency Table")
+#table(spam$type)
+```
+```{r}
+# Checking for duplicates
+n.dup <- NROW(spam[duplicated(spam),])
+n <- NROW(spam)
+matrix(c("Sample Size", "Duplicate Sample Size", n, n.dup), nrow = 2, byrow = T)
+
+# Removing duplicates
+suppressPackageStartupMessages(library(dplyr))
+spam <- distinct(spam)
+```
+
+**Comment**
+First we observe that there are 39.40448% of the emails are spam from the table and the plot while 60.59552% of the emails are nonspam.  
+57 variables are listed as numerical(continuous) whereas our target variable type which defines whether an email is spam or nonspam is listed as a factor(categorical).
+There were 391 duplicate samples in the data set. Duplicates are an extreme case of nonrandom sampling, and they bias our fitted model. Including them will essentially lead to the model overfitting.Hence, these duplicates are removed to enable further analysis.
+
+\subsection{PARTITION DATA}
+(c) Randomly divide your datasets into the training sample and for the test sample with a ratio of 2:1. We will use the training sample to train a number of models and then use the test sample to compare them.
+```{r}
+n <- NROW(spam); ratio <- 2/3
+set.seed(123)
+id.training <- sample(1:n, size=trunc(n*ratio), replace=FALSE)
+training <- spam[id.training, ] 
+test <- spam[-id.training, ]
+dim(training); dim(test)
+```
+
+**Comment**
+ The dimension of the training set is 2806 observations by 58 variables whereas the test set dimension is 1404 observations by 58 variables.
+ 
+ \section{Supervised Learning}
+Try out the following predictive modeling tools. For each method, use the training set to identify the best model and apply the model to the test set. Then plot the ROC curve and compute the C statistic or C index (area under the ROC curve), all based on the test set performance. It would be best, but not required, to have the ROC curves plotted on one figure and compared. Which method gives the highest C index?
+
+\subsection{Linear discriminant analysis (LDA)}
+```{r}
+set.seed(123)
+fit.LDA <- lda(type ~ ., data=training)
+yhat.LDA <- predict(fit.LDA, newdata=test, type="response")$x
+yhat.LDA <- scale(yhat.LDA, center=min(yhat.LDA), scale = max(yhat.LDA)-min(yhat.LDA))
+yhat.LDA <- as.vector(as.numeric(yhat.LDA))
+```
+
+
+\subsection{Logistic Regression}
+Train a ‘best’ logistic regression model. Depending on the situation, you might want to
+use a regularized logistic regression.
+
+
+```{r}
+# Variable Screening
+formula0 <- as.formula(paste("type ~ ", paste(names(training)[-c(58)], collapse= "+")))
+fit.log <- suppressWarnings(glm(formula = formula0, family = "binomial", data = training))
+summary(fit.log)
+```
+
+**Comment**
+At liberal threshold significance level α = 0.20, we exclude variables whose value is greater than that. We found 27 variables to exclude before the best subset selection.
+
+Logistic Regression via Best Subset Selection (BSS)    
+
+```{r}
+set.seed(123)
+suppressWarnings(library(glmulti)) # we use glmulti due to too many errors of the predictors in performing BSS
+excludes <- c("charSquarebracket","charRoundbracket","receive",
+             "table","original","cs","direct","parts","charHash",
+             "num415","num857","telnet","labs","hpl","money","lab",
+             "font","email","addresses","report","people","num3d",
+             "all","address","make","pm","capitalLong")
+cond <- names(training[,-c(58)]) %in% excludes
+xrs <- names(training[,-c(58)])[!cond]
+formula0 <- as.formula(paste("type ~ ", paste(xrs, collapse= "+")))
+fitting <- suppressWarnings(glmulti(formula0, data = training, fitfunction = glm, 
+                   family=binomial, intercept = TRUE, crit = bic, level = 1, 
+                   method="g", confsetsize=1, plotty = FALSE, report = FALSE))
+fit.bss <- attributes(fitting)$objects[[1]]
+yhat.bss <- suppressWarnings(predict(fit.bss, newdata=test, type="response"))
+yhat.bss <- as.vector(as.numeric(yhat.bss))
+summary(fit.bss) 
+print("BIC")
+BIC(fit.bss)
+```
+
+**Comment**
+From the output, we see that 22 out of the 30 predictor variables that were included in the analysis,were found to be statistical significant. Therefore we included the 22 predictor variables in the best subset model.
+
+\subsection{One single decision tree}
+```{r}
+set.seed(123)
+library(rpart)
+control0 <- rpart.control(minsplit=10, minbucket=7, maxdepth=9, cp=0, 
+                           maxcompete=2,maxsurrogate=2, usesurrogate=2, 
+                           surrogatestyle=0,xval=10)   							
+
+fit.tree <- rpart(type ~ ., data=training, method="anova", control=control0)
+yhat.tree <- predict(fit.tree, newdata=test)
+yhat.tree <- as.vector(as.numeric(yhat.tree))
+fit.tree$variable.importance
+```
+
+
+We observed that most the variables that were found to be significant in the BSS model were also found to be important variables in the one single decision tree. However, there are a few of them that differs (e.g., $internet$, $hpl$, $technology$, $you$, etc., see table below)*

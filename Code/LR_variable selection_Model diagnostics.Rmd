@@ -1,0 +1,336 @@
+---
+title: "Project 4 STAT 5474"
+author: "Prince Appiah"
+date: "10/19/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+\section {Read in Data}
+
+```{r}
+baseball <- read.table(file=
+        "http://www.amstat.org/publications/jse/datasets/baseball.dat.txt",
+        header = F, col.names=c("salary", "batting.avg", "OBP", "runs", "hits",
+        "doubles", "triples", "homeruns", "RBI", "walks", "strike.outs",
+        "stolen.bases", "errors", "free.agency.elig", "free.agent.91",
+        "arb.elig", "arb.91", "name"))
+head(baseball)
+dim(baseball)
+```
+
+**Comments**
+We printed the first 6 rows of the data set.Also the dimension of the baseball is 337 rows and 18 columns(that is 337 observations and 18 variables).
+
+```{r}
+bb92 <- read.csv(file="bb92-test.csv", header=T)
+```
+**Comment**
+Read in the data bb92 which will be used later for model deployment.
+
+
+\section{Linear Regression}
+
+Linear regression will be used to predict a hitter’s salary based on his performance variables. 
+
+\subsection{1. EDA}
+(a) Obtain the histograms of both salary and the logarithm (natural base) of salary and comment. Proceed with the log-transformed salary from this step on.
+
+```{r}
+# Histogram of log(salary)
+hist(baseball$salary, main= "Histogram of Salaries", xlab= "Salary")
+
+baseball$logsalary <- log(baseball$salary) #transform salaries to natural log
+
+hist(baseball$logsalary, main= "Histogram of ln(Salaries)",
+     xlab= "Natural log Salary") #histogram of natural log Salaries
+```
+**Comment**
+We first observe that the histogram of the distribution of Salary is right skewed which follows an exponential distribution. 
+After the log transform, we observe that the histogram for salary has been shifted to the right making our data appears more normally or uniformly distributed.
+
+(b) Inspect the data and answer these questions: Are there any missing data? Among all the predictors, how many of them are continuous, integer counts, and categorical, respectively?
+
+```{r}
+#install.packages("questionr")
+library(questionr)
+freq.na(baseball)
+str(baseball)
+```
+**Comment**
+Clearly, we see that there are no missing values in our data set.
+Also, we observe that there are 3 variables that are continuous counts, 11 variables that are integer counts and 4 variables that are categorical counts. Moreover, the variable "name" is chr which can be classified as categorical variable.
+
+
+\subsection{2. Linear Regression with Variable Selection}
+
+(a) Partition the data randomly into two sets: the training data D and the test data D with a ratio of about 2:1.
+
+```{r}
+set.seed(150)
+ratio <- 2/3
+rem.sal.nam <- baseball[, -c(1,18)] # we are now using the variable "logsalary" so salary is irrelevant and also the variable "name" is not good for predicting.
+names(rem.sal.nam)
+dt <- sort(sample(nrow(rem.sal.nam), nrow(rem.sal.nam)*ratio)) 
+D <-rem.sal.nam[dt,] # training data
+D0 <- rem.sal.nam[-dt,] # test data
+dim(D)
+dim(D0)
+```
+**Comment**
+The data set has been partitioned into two sets with 2/3 being the training data with dimension 224 observations and 17 variables and 1/3 being the test data with dimension 113 observations and 17 variables.
+
+
+(b) Using the training data D, apply three variable selection methods of your choice and identify your ‘best’ models accordingly.
+
+Full Model
+```{r}
+formula0 <- logsalary ~ batting.avg + OBP + runs+ hits + doubles + triples + homeruns + RBI + walks + strike.outs + stolen.bases + errors + free.agency.elig + free.agent.91 + arb.elig + arb.91-1
+y <- D[, all.vars(formula0)[1]]
+X <- model.matrix(as.formula(formula0),D)
+X <- as.data.frame(scale(X, center = TRUE, scale = TRUE)) # Standardize X
+y <- scale(y, center = TRUE, scale = FALSE) # At least center y
+dat <- as.data.frame(cbind(X, y))
+fit.full <- lm(formula0, data=D)
+BIC(fit.full)
+summary(fit.full)
+```
+**Comment**
+We observe from the output that the full model is found to be statistically significant with given the F-Values and p-values and with an R-Squared of 0.983.
+Six variables were found to be statistically significant with p-values less than 0.5.
+Also, the BIC is 651 which means the complexity of full model has quite increased. 
+
+Method 1: LASSO
+
+```{r}
+set.seed(150)
+library(glmnet)
+library(ncvreg)
+formula.LASSO<- cv.ncvreg(X=X,y=y, nfolds=10, family="gaussian", 
+	penalty="lasso", lambda.min=.005, nlambda=100, eps=.001, max.iter=1000) 
+plot(formula.LASSO)
+names(formula.LASSO)
+beta.hat <- coef(formula.LASSO)  # THE LASSO COEFFICIENTS WITH MINIMUM CV ERROR
+cutoff <- 0.0001
+terms <- names(beta.hat)[abs(beta.hat) > cutoff]
+formula.LASS <- as.formula(paste(c("logsalary ~ ", terms[-1]), collapse=" + "))
+fit.L1 <- lm(formula.LASS, data = D)
+summary(fit.L1)
+```
+
+**Comment**
+The graph indicates that as the variable selected increases, the cross-validation error decreases (getting close to zero). The dash line indicates the value for which the model has the lowest cross-validation mean squared error.
+Also, we observe that the variables runs,RBI,strike.outs,free.agency.elig and arb.elig are statistically significant as their p-values are less than 0.05. Also, looking at the overall p-value=2e-16 < 0.05, we can conclude that there is some form of relationship between the logsalary and the independent variables. That is at least one of the coefficients of our independent variables is not zero.
+
+
+Method 2: ADAPTIVE LASSO
+
+```{r}
+set.seed(150)
+library(MESS)
+library(glmnet)
+wt <- adaptive.weights(x=X, y=y, weight.method="univariate")
+cv.ALASSO <- cv.glmnet(x=as.matrix(X), y=y, family="gaussian", alpha=1, nlambda=100,
+                       penalty.factor=as.numeric(wt$weights), standardize=FALSE)
+plot(cv.ALASSO)
+beta.hat.alasso <- coef(cv.ALASSO, s="lambda.1se")
+cutoff <- 0
+terms <- names(X)[abs(as.vector(beta.hat.alasso[-1])) > cutoff]
+formula.ALASSO <- as.formula(paste(c("logsalary ~ ", terms),
+                                   collapse=" + "))
+fit.ALASSO <- lm(formula.ALASSO, data =D)
+summary(fit.ALASSO)
+```
+**Comment**
+The graph indicates that as the variable selected increases, the mean-squared error decreases (getting close to zero). The dash line to the left indicates the value for which the model has lowest cross-validation mean squared error while the dash line to the right indicates indicates 1 standard error from the minimum mean squared error.
+Also, we observe that the variables runs,RBI,free.agency.elig and arb.elig are statistically significant as their p-values are less than 0.05. Also, looking at the overall p-value=2e-16 < 0.05, we can conclude that there is a relationship between the logsalary and the independent variables. That is at least one of the coefficients of our independent variables is not zero.
+
+Method 3 (Stepwise Regression)        
+```{r}
+set.seed(150)
+library(MASS)
+fit.step <- stepAIC(fit.full, direction = "backward", k=log(nrow(D)))
+fit.step$anova
+summary(fit.step)
+```
+**Comment**
+We observe from the output that AIC reduces after each iteration. This selection criteria produce a model with 5 variables (OBP ,RBI,walks, free.agency.elig, arb.elig) all been statistically significant) as each p-value is less than 0.05.
+
+
+(c) Report the essential steps and/or key quantities involved in the variable selection procedure that you choose.               
+
+i) LASSO: The LASSO method puts a constraint on the sum of the absolute values of the model parameters, the sum has to be less than a fixed value (upper bound). In order to do so the method apply a shrinking (regularization) process where it penalizes the coefficients of the regression variables shrinking some of them to zero.                           
+
+ii) Adaptive LASSO: Adaptive LASSO selection is a modification of LASSO selection. In adaptive LASSO selection, weights are applied to each of the parameters in forming the LASSO constraint.Adaptive LASSO enjoys the oracle properties; namely, it performs as well as if the true underlying model were given in advance.        
+
+iii) Stepwise regression is a combination of the forward and backward selection techniques. Stepwise regression is a modification of the forward selection so that  after each step in which a variable was added, all candidate variables in the model are checked  to see if their significance has been reduced below the specified tolerance level. If a nonsignificant variable is found, it is removed from the model.Stepwise regression requires two significance levels: one for adding variables and one for removing variables. The cutoff probability for adding variables should be less than the cutoff probability for removing variables so that the procedure does not get into an infinite loop.                
+
+
+(d) Output the necessary fitting results for each ‘best’ model, e.g., in particular, selected variables and their corresponding slope parameter estimates.       
+
+```{r}
+# Outputting  the best fit for the LASSO selections method.
+fit1<- lm(logsalary~ runs  + hits + RBI + strike.outs + errors + free.agency.elig + free.agent.91 + arb.elig + arb.91, data=D )
+summary(fit1)
+```
+**Comment**
+The OLS model of the  best fits  for LASSO varibles is found to be statistically significant given the F-Values and p-values from the output with an R-Squared of 0.795 which is not different from the initial LASSO fit R-squared of 0.795.* 
+
+```{r}
+#Outputting  the best fit for the Adaptive LASSO selections method.
+fit2<- lm(logsalary ~ runs  + hits + RBI + free.agency.elig + arb.elig, data=D )
+summary(fit2)
+```
+**Comment**
+The OLS model of the  best fits  for ALASSO varibles is found to be statistically significant given the F-Values and P-values from the  output with an R-Squared of 0.782 which is not significantly different from the initial ALASSO fit R-squared of 0.782           
+
+```{r}
+# Outputting  the best fit for the stepwise selections method.
+fit3<-lm(formula = logsalary ~ OBP + RBI + walks + free.agency.elig + arb.elig,
+         data = D)
+summary(fit3)
+```
+**Comment**
+The OLS model of the  best fits  for Stepwise variable is found to be statistically significant given the F-Values and p-values from the output with an R-Squared of 0.77 which is significantly different from the initial Stepwise fit R-squared of 0.983.          
+
+
+(e) Apply your ‘best’ models to the test data D0 Output the sum of squared prediction error (SSPE). Let’s consider the one yielding the minimum SSPE as the final model.  
+
+```{r}
+# LASSO fit with test data
+fit1.D0 <- lm(logsalary~ runs + hits + RBI + strike.outs + errors + free.agency.elig + free.agent.91 + arb.elig + arb.91, data=D0) 
+pred1.D0 <- predict(fit1.D0, newdata = D0)
+# Adaptive LASSO fit with test data
+fit2.D0 <- lm(logsalary ~ runs + hits + RBI + free.agency.elig + arb.elig, data=D0) 
+pred2.D0<-predict(fit2.D0, newdata = D0)
+# Stepwise fit with test data
+fit3.D0 <- lm(logsalary ~ OBP + RBI + walks + free.agency.elig + arb.elig, data=D0)
+pred3.D0 <- predict(fit3.D0, newdata= D0)
+```
+
+
+```{r}
+# Estimating the SSPE
+MSE.LASSO <- sum((D0$logsalary-pred1.D0)**2) # sum of square error
+MSE.ALASSO <- sum((D0$logsalary-pred2.D0)**2) # sum of square error
+MSE.STEP <- sum((D0$logsalary-pred3.D0)**2) # sum of square error
+c(MSE.LASSO, MSE.ALASSO, MSE.STEP) # print sum of square errors
+```
+**Comment**
+We see that least SSPE is 27.9 which is the LASSO model. Thus, the final model is the LASSO model.
+
+
+\subsection{3. Final Model}
+
+Refit your final model using the entire data, i.e., DuD. Call it fit.final. Provide the output from your final model with summary(fit.final). Interpret the results.
+
+```{r}
+fit.final = fit.L1 
+ summary(fit.final)
+```
+**Comment**
+We see that we have an adjusted R-squared of 0.787 which is relatively strong. Hence, it appears our chosen model fits the data well. We also see that  almost all the independent variables are significant with the exception of hits, errors and arb.91. Moreover, we see from the estimated coefficients and intercepts that the expected value or average salary is 5.047840.
+
+
+
+\subsection{4.Model diagnostics}
+
+(a) Normality
+```{r}
+r.jack <- rstudent(fit.final)
+par(mfrow=c(1,2),mar=c(8,4,8,4)) 
+# The fisrt plot: Histogram 
+hist(r.jack, xlab="Jackknife Residual", col="green4",
+	main="(a) Histogram") 
+# install.packages("car")
+library(car)
+qqPlot(r.jack, pch=19, cex=.8, col="blue", main="(b) Q-Q Plot") 
+# THE SHAPIRO-WILKS NORMALITY TEST: A LARGE P-VALUE WOULD JUSTIFY NORMALITY
+shapiro.test(r.jack)
+```
+
+**Comment**
+The jackknife residuals based on the Histogram appear to be normally distributed with possible few outliers.  Whereas on the the QQ Plot the residuals tend to stay on the line, just a couple outliers in particular observations 28, 34 and 22. Moreover, the output for Shapiro-Wilk normality test gave a p value = 2e-08 less than the level of significance at 0.05, hence we do not have
+normality.
+
+(b) Homoscedasticity
+```{r}
+ncvTest(fit.final) 
+# A LARGE P-VALUE (>0.05) JUSTIFIES EQUAL VARIANCE
+# Plot Absolute Jackknife Residuals vs. Fitted values 
+# Power Box-Cox Transformation on the response Y is suggested 
+par(mfrow=c(1,1),mar=c(4, 4, 4, 4)) 
+spreadLevelPlot(fit.final, pch=18, cex=0.5, col="blue",
+	main="Absolute Jackknife Residuals vs. Fitted values: Heteroscedasticity")
+```
+**Comment**
+We used the Breusch-Pagan Test to check for non-constant error variance. We had a p- value=0.7 greater than the level of significance at 0.05, hence we can assume equal variance. The line on the graph is relatively horizontal or flat which shows equal variance. We also see from the graph that the residuals are spread equally along the ranges of predictors.Hence, we conclude that the heteroscedasticity is not present. 
+
+(c) Independence
+```{r}
+durbinWatsonTest(fit.final)
+# LARGE P-VALUE (>0.05) JUSTIFIES INDEPENDENCE
+```
+**Comment**
+We have p-value=0.024 < 0.05, hence we cannot assume independence.
+
+(d) Linearity
+```{r}
+# leverage plots or partial regression plot
+leveragePlots(fit.final, main="Partial Regression (Leverage) Plots")
+```
+**Comment**
+We observe some form of clustering from the plots of the predictors free.agent.91,arb.elig and arb.91 whereas the other predictors appear linear if the outliers are ignored.
+
+(e) Outlier Detection
+```{r, message=FALSE, warning=FALSE}
+influencePlot(fit.final, id.method="identify", 
+	col="blue", 
+	main="Influence Plot", 
+	sub="Circle size is proportial to Cook's d")
+```
+**Comment**
+From the plot we have few observations that are outliers.In particular the observations 322,284,28 and 126 are outliers. Observations 28 and 126 have more potential to influence the model so it would be best to remove them. We observe that the best range to work with is [-2,2] on the vertical axis(studentized residuals) and [0,0.8] on the horizontal axis(Hat-Values).
+
+(f) Multicollinearity
+```{r}
+# CONDITION NUMBER to get matrix x
+# WITHOUT INTERCEPT
+kappa(lm(logsalary~ runs + hits + RBI + strike.outs + errors + free.agency.elig + free.agent.91 + arb.elig + arb.91-1, data=D, x=TRUE)$x) 
+vif(fit.final) 
+```
+**Comment**
+ The condition number is 646 > 100(the threshold given in the question).Hence, multicollinearity could be present. According to the result from VIF we see that all of our variables are less than 10, so we can conclude that there is no multicollinearity in our model.
+
+
+\subsection{5.Model Deployment}
+
+```{r}
+# predicting the data
+pred <- predict(fit.final, bb92, interval="prediction")
+# taking exponential of the predicted values
+dat.plot <- data.frame(player=1:NROW(bb92), exp(pred))
+names(dat.plot)
+dat.plot
+```
+**Comment**
+The output above displays the log transform of the predicted values and their corresponding confidence intervals. We see that all the predicted values lies within each corresponding confidence interval.
+
+```{r}
+# producing the error plot
+library(ggplot2)
+ggplot(dat.plot, aes(x=player, y=fit)) +
+geom_errorbar(aes(ymin=lwr, ymax=upr)) + geom_point()
+```
+**Comment**
+We apply our final model to predict the log-salary for the new data set in the file bb92-test.csv, which contains the performance data only for 20 players, as well as the prediction intervals.
+From the plot the distance between the upper and lower portion of the bar or line represents the variability. We can see that almost all the players have a relatively good fitting, however for players 16 and 17 this model could not be a really good fit for them to predict their salary. Player 20 has good fitting since the variability is small.
+
+
+
